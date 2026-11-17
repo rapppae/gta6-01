@@ -1,50 +1,141 @@
-// SOLMAR — the wanted level and the police. Crimes raise it, quiet time lowers it,
-// and one police car per star (up to three) spawns on the road grid and chases the player.
-import { POLICE_MAX_CARS, STREETS, WANTED_DECAY_EVERY, WANTED_DECAY_QUIET, WANTED_MAX } from './config.js';
-import { makeCar } from './vehicles.js';
+// SOLMAR — police.js
+// The wanted level and the Solmar police. Crimes raise the stars; the level
+// decays when the player lies low and no cruiser can see them. More stars
+// means more chasers, faster and more aggressive. At zero stars the cruisers
+// just patrol the grid.
 
-export function createPolice(G) {
-  return {
-    level: 0,
-    quietTimer: 0,
-    decayTimer: 0,
-    addWanted(n) {
-      const before = this.level;
-      this.level = Math.min(WANTED_MAX, this.level + n);
-      this.quietTimer = 0;
-      if (this.level > before) G.hud.setStars(this.level);
-    },
-    step(dt) {
-      if (this.level === 0) { this.quietTimer = 0; return; }
-      this.quietTimer += dt;
-      if (this.quietTimer > WANTED_DECAY_QUIET) {
+import * as THREE from 'three';
+import { CFG } from './config.js';
+
+export class PoliceForce {
+  constructor(fleet, world, rng) {
+    this.fleet = fleet;
+    this.world = world;
+    this.rng = rng;
+    this.level = 0;
+    this.lastCrimeAt = -999;
+    this.decayTimer = 0;
+    this.chasers = []; // police cars currently hunting the player
+    this.spawnTimer = 0;
+    this.onLevelChange = null; // (level) => void, wired by main.js (siren + HUD)
+  }
+
+  get maxChasers() {
+    return this.level; // one chaser per star, up to five
+  }
+
+  addWanted(amount, now) {
+    if (amount <= 0) return;
+    const before = this.level;
+    this.level = Math.min(CFG.maxWanted, this.level + amount);
+    this.lastCrimeAt = now;
+    this.decayTimer = 0;
+    if (this.level !== before && this.onLevelChange) this.onLevelChange(this.level);
+  }
+
+  clearWanted(now) {
+    if (this.level === 0) return;
+    this.level = 0;
+    this.lastCrimeAt = now;
+    if (this.onLevelChange) this.onLevelChange(0);
+    this.releaseChasers();
+  }
+
+  releaseChasers() {
+    for (const car of this.chasers) {
+      car.patrol = true;
+      car.traffic = true;
+      car.axis = Math.random() < 0.5 ? 'x' : 'z';
+      car.dir = Math.random() < 0.5 ? 1 : -1;
+    }
+    this.chasers = [];
+  }
+
+  // Keep the chaser count matched to the wanted level, spawning new cruisers
+  // at the map edges near the player.
+  maintainChasers(player) {
+    // Drop chasers that were destroyed or released.
+    this.chasers = this.chasers.filter((c) => this.fleet.cars.includes(c));
+    while (this.chasers.length < this.maxChasers) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 55 + Math.random() * 25;
+      let x = player.x + Math.sin(angle) * dist;
+      let z = player.z + Math.cos(angle) * dist;
+      x = THREE.MathUtils.clamp(x, -170, 170);
+      z = THREE.MathUtils.clamp(z, -170, 170);
+      // Never spawn inside a building.
+      if (this.world.isInsideBuilding(x, z, 2)) {
+        x = this.world.nearestRoadCoord(x);
+        z = this.world.nearestRoadCoord(z);
+      }
+      const car = this.fleet.spawnPoliceChaser(x, z);
+      this.chasers.push(car);
+    }
+    while (this.chasers.length > this.maxChasers) {
+      const car = this.chasers.pop();
+      car.patrol = true;
+      car.traffic = true;
+    }
+  }
+
+  // One chaser steering at the player. Aggression (speed and ram damage)
+  // grows with the wanted level.
+  chaseCar(car, dt, player, now, onRam) {
+    const tx = player.inCar ? player.inCar.x : player.x;
+    const tz = player.inCar ? player.inCar.z : player.z;
+    const dx = tx - car.x;
+    const dz = tz - car.z;
+    const dist = Math.hypot(dx, dz);
+    const wantAngle = Math.atan2(dx, dz);
+    let diff = wantAngle - car.angle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    const aggression = 0.55 + this.level * 0.14;
+    car.angle += THREE.MathUtils.clamp(diff, -1, 1) * aggression * 2.2 * dt;
+    const topSpeed = Math.min(CFG.policeChaseSpeed, 18 + this.level * 2.2);
+    const target = dist > 6 ? topSpeed : topSpeed * 0.6;
+    car.speed += (target - car.speed) * Math.min(1, dt * 1.2);
+    car.x += Math.sin(car.angle) * car.speed * dt;
+    car.z += Math.cos(car.angle) * car.speed * dt;
+    const pos = { x: car.x, z: car.z };
+    if (this.world.collideCircle(pos, 1.5)) car.speed *= 0.5;
+    this.world.clampToBounds(pos, 2);
+    car.x = pos.x;
+    car.z = pos.z;
+    car.mesh.position.set(car.x, 0, car.z);
+    car.mesh.rotation.y = car.angle;
+    // Ramming the player: a bump on foot hurts, a bump in a car slows them.
+    if (dist < 3.6 && onRam) onRam(car, dist, now);
+  }
+
+  // Is any police car close enough to see the player?
+  anyPoliceNear(player, range = CFG.policeSightRange) {
+    const px = player.inCar ? player.inCar.x : player.x;
+    const pz = player.inCar ? player.inCar.z : player.z;
+    for (const car of this.fleet.cars) {
+      if (car.kind !== 'police') continue;
+      if (Math.hypot(car.x - px, car.z - pz) < range) return true;
+    }
+    return false;
+  }
+
+  update(dt, now, player, onRam) {
+    if (this.level > 0) this.maintainChasers(player);
+    else if (this.chasers.length > 0) this.releaseChasers();
+    for (const car of this.chasers) this.chaseCar(car, dt, player, now, onRam);
+    // Decay: no crime for a while and no cruiser in sight, and the heat cools.
+    if (this.level > 0 && now - this.lastCrimeAt > CFG.wantedDecayDelay) {
+      if (!this.anyPoliceNear(player)) {
         this.decayTimer += dt;
-        if (this.decayTimer > WANTED_DECAY_EVERY) {
+        if (this.decayTimer >= CFG.wantedDecayStep) {
           this.decayTimer = 0;
           this.level -= 1;
-          G.hud.setStars(this.level);
-          if (this.level === 0) G.hud.toast('You lost the cops');
+          if (this.onLevelChange) this.onLevelChange(this.level);
+          if (this.level === 0) this.releaseChasers();
         }
+      } else {
+        this.decayTimer = 0;
       }
-      // Keep the right number of police cars on the road.
-      const want = Math.min(this.level, POLICE_MAX_CARS);
-      const have = G.cars.filter((c) => c.kind === 'police').length;
-      if (have < want) {
-        const p = G.player;
-        const street = G.world.rng.pick(STREETS);
-        const along = G.world.rng.range(-240, 240);
-        const horizontal = G.world.rng.chance(0.5);
-        let x = horizontal ? along : street;
-        let z = horizontal ? street : along;
-        // Spawn at least 50 units away so they do not appear on top of the player.
-        if (Math.hypot(x - p.x, z - p.z) < 50) { x = p.x + 70; z = p.z + 20; }
-        const car = makeCar(G, 'police', x, z, 0, 0xe8e8e8);
-        car.speed = 10;
-        G.cars.push(car);
-      } else if (have > want) {
-        const idx = G.cars.findIndex((c) => c.kind === 'police');
-        if (idx >= 0) G.cars.splice(idx, 1);
-      }
-    },
-  };
+    }
+  }
 }

@@ -1,68 +1,103 @@
-// SOLMAR — keyboard and mouse. Held keys are read every sim step; pressed keys are
-// edges that the main loop clears after each step, so a tap fires exactly once.
-export function createInput(canvas) {
-  const input = {
-    forward: false, back: false, left: false, right: false,
-    sprint: false, jump: false, handbrake: false,
-    interactHeld: false, interactPressed: false,
-    shootPressed: false, reloadPressed: false, pausePressed: false,
-    mouseDX: 0, mouseDY: 0, pointerLocked: false, anyKey: false,
-  };
-  const keys = {};
-  function updateHeld() {
-    input.forward = !!(keys.KeyW || keys.ArrowUp);
-    input.back = !!(keys.KeyS || keys.ArrowDown);
-    input.left = !!(keys.KeyA || keys.ArrowLeft);
-    input.right = !!(keys.KeyD || keys.ArrowRight);
-    input.sprint = !!keys.ShiftLeft || !!keys.ShiftRight;
-    input.jump = !!keys.Space;
-    input.handbrake = !!keys.Space;
-    input.interactHeld = !!keys.KeyE;
+// SOLMAR — input.js
+// Keyboard and mouse state, plus pointer lock. The game reads from one Input
+// object every frame; nothing else touches the DOM events directly.
+
+export class Input {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.keys = new Set();
+    this.lookDX = 0;
+    this.lookDY = 0;
+    this.mouseDown = false;
+    this.mouseClicked = false; // one-frame click flag, consumed by combat
+    this.pointerLocked = false;
+    this.enabled = true;
+    this.shotMode = false; // staged screenshots never take pointer lock
+    this.onPauseKey = null; // set by main.js
+    this.onInteractKey = null;
+    this.onReloadKey = null;
+    this.attach();
   }
-  window.addEventListener('keydown', (e) => {
-    if (e.repeat) return;
-    keys[e.code] = true;
-    input.anyKey = true;
-    if (e.code === 'KeyE') input.interactPressed = true;
-    if (e.code === 'KeyR') input.reloadPressed = true;
-    if (e.code === 'KeyP' || e.code === 'Escape') input.pausePressed = true;
-    if (e.code === 'Space') e.preventDefault();
-    updateHeld();
-  });
-  window.addEventListener('keyup', (e) => {
-    keys[e.code] = false;
-    updateHeld();
-  });
-  window.addEventListener('blur', () => {
-    for (const k of Object.keys(keys)) keys[k] = false;
-    updateHeld();
-  });
-  document.addEventListener('pointerlockchange', () => {
-    input.pointerLocked = document.pointerLockElement === canvas;
-  });
-  document.addEventListener('mousemove', (e) => {
-    if (input.pointerLocked) {
-      input.mouseDX += e.movementX;
-      input.mouseDY += e.movementY;
-    }
-  });
-  canvas.addEventListener('mousedown', (e) => {
-    if (e.button === 0) input.shootPressed = true;
-  });
-  input.requestLock = () => {
+
+  attach() {
+    window.addEventListener('keydown', (e) => {
+      if (!this.enabled) return;
+      if (e.code === 'Space') e.preventDefault();
+      if (e.repeat) return;
+      this.keys.add(e.code);
+      if (e.code === 'KeyP' && this.onPauseKey) this.onPauseKey();
+      if (e.code === 'Escape' && this.onPauseKey) this.onPauseKey();
+      if (e.code === 'KeyE' && this.onInteractKey) this.onInteractKey();
+      if (e.code === 'KeyR' && this.onReloadKey) this.onReloadKey();
+    });
+    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
+    window.addEventListener('blur', () => this.keys.clear());
+    document.addEventListener('mousemove', (e) => {
+      if (!this.pointerLocked) return;
+      this.lookDX += e.movementX || 0;
+      this.lookDY += e.movementY || 0;
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      this.mouseDown = true;
+      this.mouseClicked = true;
+    });
+    document.addEventListener('mouseup', (e) => {
+      if (e.button !== 0) return;
+      this.mouseDown = false;
+    });
+    document.addEventListener('pointerlockchange', () => {
+      this.pointerLocked = document.pointerLockElement === this.canvas;
+    });
+    this.canvas.addEventListener('click', () => this.requestLock());
+  }
+
+  isDown(code) {
+    return this.keys.has(code);
+  }
+
+  // Movement keys as a -1..1 pair, relative to the camera.
+  moveAxes() {
+    let f = 0;
+    let s = 0;
+    if (this.isDown('KeyW') || this.isDown('ArrowUp')) f += 1;
+    if (this.isDown('KeyS') || this.isDown('ArrowDown')) f -= 1;
+    if (this.isDown('KeyD') || this.isDown('ArrowRight')) s += 1;
+    if (this.isDown('KeyA') || this.isDown('ArrowLeft')) s -= 1;
+    return { f, s };
+  }
+
+  sprinting() {
+    return this.isDown('ShiftLeft') || this.isDown('ShiftRight');
+  }
+
+  // Mouse look accumulated since the last frame; calling this clears it.
+  consumeLook() {
+    const dx = this.lookDX;
+    const dy = this.lookDY;
+    this.lookDX = 0;
+    this.lookDY = 0;
+    return { dx, dy };
+  }
+
+  consumeClick() {
+    const c = this.mouseClicked;
+    this.mouseClicked = false;
+    return c;
+  }
+
+  requestLock() {
+    if (this.shotMode) return;
+    if (this.pointerLocked) return;
     try {
-      const p = canvas.requestPointerLock();
+      const p = this.canvas.requestPointerLock();
       if (p && p.catch) p.catch(() => {});
-    } catch { /* pointer lock can be refused; mouse still works via drag */ }
-  };
-  input.clearEdges = () => {
-    input.interactPressed = false;
-    input.shootPressed = false;
-    input.reloadPressed = false;
-    input.pausePressed = false;
-    input.anyKey = false;
-    input.mouseDX = 0;
-    input.mouseDY = 0;
-  };
-  return input;
+    } catch {
+      // Headless or denied: the game still plays with keyboard only.
+    }
+  }
+
+  releaseLock() {
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
 }

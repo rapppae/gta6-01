@@ -1,104 +1,184 @@
-// SOLMAR — the screenshot scenes behind ?shot=chase|city|mission|start. Each one plays
-// the real sim forward from a fresh world for a fixed number of steps, steered by a simple
-// autopilot (hold W, or aim at the nearest guard and fire once), so the frame is what a
-// short game really looks like and the same seed always gives the same frame.
-import { LANDMARKS } from './config.js';
-import { STEP } from './config.js';
+// SOLMAR — shots.js
+// Staged screenshot modes, driven by the page URL: ?shot=chase|city|mission|start
+// Each mode arranges a real gameplay scene — a police chase, the player on
+// foot in the city, combat at the drop point, the title screen — then sets
+// window.__shotReady so the screenshot driver knows the frame is ready.
+// Nothing here fakes a picture: the game itself is running in every shot.
 
-function runSteps(G, stepSim, seconds, setup) {
-  const n = Math.round(seconds / STEP);
-  for (let i = 0; i < n; i += 1) {
-    if (setup) setup(i);
-    stepSim(G, STEP);
-  }
-}
+import * as THREE from 'three';
+import { CFG, PLACES } from './config.js';
 
-export function stageShot(name, G, stepSim) {
-  G.screen = 'play';
-  if (name === 'start') {
-    runSteps(G, stepSim, 5, null);
-    G.shotCam = { pos: [150, 55, -260], look: [0, 8, 40] };
-    G.screen = 'title';
-    return { screen: 'title' };
+export class ShotDirector {
+  constructor(game) {
+    this.game = game; // the whole game state G
+    this.mode = null;
+    this.frames = 0;
+    this.ready = false;
   }
-  if (name === 'chase') {
-    // Mission 2, the getaway: the player tears east down 0th street in a stolen car,
-    // two police cars closing in, three stars on the HUD. The car rides the right lane.
-    const car = G.cars.find((c) => c.kind === 'parked');
-    car.kind = 'player';
-    car.x = -120; car.z = 2.5; car.heading = Math.PI / 2; car.speed = 24;
-    G.player.inCar = car;
-    G.player.x = car.x; G.player.z = car.z; G.player.heading = car.heading;
-    G.camera.yaw = -Math.PI / 2; // camera behind, looking east
-    G.camera.pitch = 0.22;
-    G.missions.startMission(1);
-    G.missions.stepIndex = 1; // already past the steal, driving to the getaway
-    G.missions.stepTimer = 0;
-    G.police.addWanted(3);
-    // Two police cars ahead in formation (patrol: straight, no ramming), so the frame
-    // shows the chase and the player car stays fast: one in the player's lane, one in
-    // the oncoming lane being overtaken.
-    const pc1 = {
-      id: 900, kind: 'police', x: -100, z: -2.5,
-      heading: Math.PI / 2, speed: 36, color: 0xe8e8e8, driver: null,
-      axis: 'x', line: 0, dir: 1, targetSpeed: 36, steer: 0, mesh: null, lightPhase: 0, patrol: true,
-    };
-    const pc2 = {
-      id: 901, kind: 'police', x: -85, z: 2.5,
-      heading: Math.PI / 2, speed: 34, color: 0xe8e8e8, driver: null,
-      axis: 'x', line: 0, dir: 1, targetSpeed: 34, steer: 0, mesh: null, lightPhase: 2, patrol: true,
-    };
-    // A third patrol car far ahead: it fills the wanted count (3 stars = 3 cars), so
-    // the wanted system spawns no chasing car that could ram the player off the road.
-    const pc3 = {
-      id: 902, kind: 'police', x: -40, z: -2.5,
-      heading: Math.PI / 2, speed: 38, color: 0xe8e8e8, driver: null,
-      axis: 'x', line: 0, dir: 1, targetSpeed: 38, steer: 0, mesh: null, lightPhase: 4, patrol: true,
-    };
-    G.cars.push(pc1, pc2, pc3);
-    G.input.forward = true;
-    runSteps(G, stepSim, 6, null);
-    G.input.forward = false;
-    return { screen: 'play' };
+
+  // Read the mode from the URL. Returns null for normal play.
+  static modeFromUrl() {
+    const q = new URLSearchParams(window.location.search);
+    return q.get('shot');
   }
-  if (name === 'mission') {
-    // Mission 3, the drop: the player on foot at the north-east corner, guards ahead,
-    // one shot fired so the tracer and muzzle flash are in the frame. The player stands
-    // beyond the corner looking back south-west, so the city is behind the guards.
-    G.missions.startMission(2);
-    G.player.x = LANDMARKS.buyer.x + 14;
-    G.player.z = LANDMARKS.buyer.z + 14;
-    G.player.health = 100;
-    runSteps(G, stepSim, 0.5, null);
-    // Aim at the nearest guard and fire LAST, so the tracer, muzzle flash and hit
-    // sparks are still in the frame when it is painted (no sim steps run after this).
-    let nearest = null;
-    let nearestD = Infinity;
-    for (const e of G.enemies) {
-      const d = Math.hypot(e.x - G.player.x, e.z - G.player.z);
-      if (d < nearestD) { nearestD = d; nearest = e; }
+
+  begin(mode) {
+    this.mode = mode;
+    this.frames = 0;
+    this.ready = false;
+    const G = this.game;
+    G.input.shotMode = true;
+    G.input.enabled = false; // staged shots ignore the keyboard
+    if (mode === 'start') {
+      G.screen = 'title';
+      G.player.reset({ x: -20, z: 20 });
+      this.finishAfter(50);
+      return;
     }
-    if (nearest) {
-      const dx = nearest.x - G.player.x;
-      const dz = nearest.z - G.player.z;
-      G.camera.yaw = Math.atan2(-dx, -dz);
-      G.camera.pitch = 0.02;
-      G.player.heading = Math.atan2(dx, dz);
+    // Every gameplay shot starts a fresh run on mission 1.
+    G.screen = 'playing';
+    G.missions.reset();
+    G.combat.clearEnemies();
+    G.combat.resetAmmo();
+    G.police.clearWanted(G.time);
+    if (mode === 'city') {
+      // On foot on the road at z=0, facing east down the street toward the beach.
+      G.player.reset({ x: -40, z: 0 });
+      G.player.yaw = -Math.PI / 2;
+      G.player.facing = Math.PI / 2;
+      G.player.syncMesh();
+      this.finishAfter(45);
+    } else if (mode === 'chase') {
+      // The player in a fast car, three stars, three cruisers on their tail.
+      const car = G.fleet.cars.find((c) => !c.driver && c.kind === 'sport')
+        || G.fleet.cars.find((c) => !c.driver);
+      G.player.reset({ x: -60, z: 0 });
+      car.x = -60;
+      car.z = 0;
+      car.angle = Math.PI / 2; // heading east down the road
+      car.speed = 22;
+      car.taken = true;
+      G.player.inCar = car;
+      G.player.mesh.visible = false;
+      G.player.yaw = car.angle + Math.PI;
+      G.police.addWanted(3, G.time);
+      G.police.maintainChasers(G.player);
+      // Put the chasers right behind the player, already in pursuit.
+      for (let i = 0; i < 3; i++) {
+        const chaser = G.police.chasers[i];
+        if (!chaser) break;
+        chaser.x = -60 - (i + 1) * 9;
+        chaser.z = (i - 1) * 4;
+        chaser.angle = Math.PI / 2;
+        chaser.speed = 20;
+      }
+      this.finishAfter(50);
+    } else if (mode === 'mission') {
+      // Combat at the Palm Court drop: mission 3, ambush live, the player
+      // firing — with a tracer and muzzle flash frozen in the frame.
+      // Camera yaw 1.97 looks from the player toward the drop point, with
+      // the beacon in the open intersection behind the ambush.
+      G.player.reset({ x: PLACES.dropPoint.x + 14, z: PLACES.dropPoint.z - 6 });
+      G.player.yaw = 1.97;
+      G.player.facing = -1.17;
+      G.player.syncMesh();
+      G.missions.index = 2;
+      G.missions.stepIndex = 1; // the ambush step
+      G.missions.startedFlags = { m2: true };
+      // Clear the foreground: any car near the player or the camera would
+      // block the shot, so move it down the road.
+      for (const car of G.fleet.cars) {
+        if (Math.hypot(car.x - G.player.x, car.z - G.player.z) < 18) {
+          car.x = THREE.MathUtils.clamp(car.x + 70, -170, 170);
+          car.mesh.position.set(car.x, 0, car.z);
+        }
+      }
+      G.combat.spawnAmbush(PLACES.dropPoint.x, PLACES.dropPoint.z, 4);
+      // A live shot, frozen: tracer held, muzzle flash visible.
+      const from = { x: G.player.x, y: 1.5, z: G.player.z };
+      const target = G.combat.enemies[0];
+      const dir = { x: 0, y: 0, z: 0 };
+      if (target) {
+        const dx = target.x - from.x;
+        const dz = target.z - from.z;
+        const len = Math.hypot(dx, dz);
+        dir.x = dx / len;
+        dir.z = dz / len;
+        dir.y = -0.03;
+        G.combat.shoot(from, dir, 'player');
+        // Hold the tracer so the frame keeps it.
+        for (const t of G.particles.tracers) t.hold = true;
+        G.particles.flashMesh.visible = true;
+        G.particles.flashMesh.material.opacity = 0.95;
+        G.particles.flashMesh.position.set(from.x + dir.x, 1.5, from.z + dir.z);
+        G.particles.flashLight.intensity = 26;
+        G.particles.flashLight.position.set(from.x + dir.x, 1.5, from.z + dir.z);
+      }
+      this.finishAfter(40);
+    } else {
+      this.finishAfter(30);
     }
-    G.combat.cooldown = 0;
-    G.combat.ammo = 12;
-    G.combat.shoot();
-    return { screen: 'play' };
   }
-  // 'city' (default): mission 1, the player on foot on 0th street, walking south down
-  // the right lane while traffic and pedestrians pass.
-  G.missions.startMission(0);
-  G.player.x = 2.5; G.player.z = 100;
-  G.player.heading = 0;
-  G.camera.yaw = Math.PI;
-  G.camera.pitch = 0.18;
-  G.input.forward = true;
-  runSteps(G, stepSim, 5, null);
-  G.input.forward = false;
-  return { screen: 'play' };
+
+  finishAfter(frames) {
+    this.finishAt = frames;
+  }
+
+  // Called once per rendered frame by the main loop.
+  tick() {
+    if (!this.mode || this.ready) return;
+    this.frames += 1;
+    // In the mission shot the muzzle flash must stay visible until the frame
+    // is taken, so re-light it every frame (particles would fade it).
+    if (this.mode === 'mission') {
+      const G = this.game;
+      const fx = Math.sin(G.player.facing);
+      const fz = Math.cos(G.player.facing);
+      const mx = G.player.x + fx * 0.9;
+      const mz = G.player.z + fz * 0.9;
+      G.particles.flashMesh.visible = true;
+      G.particles.flashMesh.material.opacity = 0.95;
+      G.particles.flashMesh.position.set(mx, 1.5, mz);
+      // Face the camera and enlarge it, so the flash reads in the frame.
+      G.particles.flashMesh.rotation.y = G.player.yaw;
+      G.particles.flashMesh.scale.set(1.2, 1.2, 1.2);
+      G.particles.flashLight.intensity = 26;
+      G.particles.flashLight.position.set(mx, 1.5, mz);
+      // Keep the flash alive: particles.update hides it once flashLife runs
+      // out, and the tick runs after the render, so pin the timer up here.
+      G.particles.flashLife = 1;
+    }
+    // In the chase shot the car must stay at speed with the cruisers in
+    // formation behind it, so re-assert both every frame (drag and ramming
+    // would otherwise pile the chase up before the frame is taken).
+    if (this.mode === 'chase') {
+      const G = this.game;
+      const car = G.player.inCar;
+      if (car) {
+        car.speed = 22;
+        const fx = Math.sin(car.angle);
+        const fz = Math.cos(car.angle);
+        G.police.chasers.forEach((chaser, i) => {
+          // Two cruisers flank the player car, one trails behind near the
+          // camera: the chase reads at a glance.
+          const slots = [
+            { back: 6, side: -5.5 },
+            { back: 8, side: 5.5 },
+            { back: 24, side: -2 },
+          ];
+          const slot = slots[i] || { back: 30, side: 0 };
+          chaser.x = car.x - fx * slot.back - fz * slot.side;
+          chaser.z = car.z - fz * slot.back + fx * slot.side;
+          chaser.angle = car.angle;
+          chaser.speed = 21;
+          chaser.mesh.position.set(chaser.x, 0, chaser.z);
+          chaser.mesh.rotation.y = chaser.angle;
+        });
+      }
+    }
+    if (this.frames >= (this.finishAt || 40)) {
+      this.ready = true;
+      window.__shotReady = true;
+    }
+  }
 }

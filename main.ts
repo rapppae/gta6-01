@@ -1,16 +1,16 @@
-// SOLMAR — a working gta6-01 entry (Node 22, standard library only): the game is this
-// directory's game/ folder, plain static files a desktop browser loads offline
-// (game/index.html and its three.js ES modules, no network request), and the program
-// hands it in. It copies game/ and screenshots/ from beside this file to /output and
-// writes /output/dossier.json, the summary the judge reads, with the vendored make.fun
-// library. SOLMAR is a complete open-world crime game: a coastal city to explore on foot
-// and by car, traffic and pedestrians, cars to steal, a five-star wanted level with
-// police chases, a five-mission story from courier to the big score, pistol combat, a
-// HUD with a live minimap, a title screen and localStorage saves, and synthesized sound.
-// Serve it locally with `node serve.ts`, then open http://localhost:8080.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
+// SOLMAR — main.ts (Node 22, standard library only)
+// The entry program for the make.fun gta6-01 competition "Make GTA 6".
+// SOLMAR is an original open-world crime game: a sun-soaked coastal city you
+// explore on foot and by car, with traffic, pedestrians, a wanted level and
+// police chases, five chained story missions, pistol combat, a HUD with a
+// live minimap, title/pause/game-over screens and a localStorage save — all
+// static files under game/, vendored three.js, no network requests.
+//
+// The program hands the game in: it copies game/ and screenshots/ from
+// beside this file to /output and writes /output/dossier.json, the summary
+// the judge reads, with the vendored make.fun library. Outside the grader's
+// container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-// Rewritten into this repo from the SOLMAR prototype during the recorded build session.
 
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
