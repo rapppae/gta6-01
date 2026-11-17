@@ -109,8 +109,9 @@ export class VehicleFleet {
   }
 
   spawnInitial() {
-    // Parked cars along the roads, free to take.
-    const parkedKinds = ['sedan', 'sedan', 'taxi', 'van', 'sport', 'sedan'];
+    // Parked cars along the roads, free to take. Shuffled so the mix of
+    // sedans, taxis, vans and sports differs by seed, not by list order.
+    const parkedKinds = this.rng.shuffle(['sedan', 'sedan', 'taxi', 'van', 'sport', 'sedan', 'taxi', 'van', 'sport', 'sedan']);
     for (let i = 0; i < CFG.parkedCount; i++) {
       const road = this.rng.pick(CFG.roadCoords);
       const along = this.rng.range(-150, 150);
@@ -183,7 +184,7 @@ export class VehicleFleet {
     if (car.stopTimer > 0) {
       car.stopTimer -= dt;
       target = 0;
-    } else if (this.rng && Math.random() < dt * 0.004) {
+    } else if (this.rng.chance(dt * 0.004)) {
       car.stopTimer = this.rng.range(2, 5);
     }
     car.speed += (target - car.speed) * Math.min(1, dt * 1.5);
@@ -194,11 +195,12 @@ export class VehicleFleet {
       car.x = nx;
       car.z = nz;
       // Turn at an intersection sometimes, to keep traffic spread out.
-      if (distCross < 2 && Math.random() < 0.25) {
+      // Seeded, so the same seed replays the same traffic.
+      if (distCross < 2 && this.rng.chance(0.25)) {
         const newAxis = car.axis === 'x' ? 'z' : 'x';
         const newRoad = this.world.nearestRoadCoord(car.axis === 'x' ? car.z : car.x);
         car.axis = newAxis;
-        car.dir = Math.random() < 0.5 ? 1 : -1;
+        car.dir = this.rng.chance(0.5) ? 1 : -1;
         car.lane = car.dir * 2.6;
         if (newAxis === 'x') {
           car.z = newRoad + car.lane;

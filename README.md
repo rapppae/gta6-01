@@ -21,6 +21,14 @@ Everything in it is original: the city, the characters, the vehicles, the names 
 - **Menus and save**: title screen with New Game and Continue (localStorage save of money, mission progress and position), pause with P or Escape.
 - **Sound**: synthesised WebAudio only — engine hum, footsteps, gunshots, sirens, a mission-complete jingle and interface clicks. No audio files.
 
+## The story: five missions
+
+1. **The Pickup** ($250) — walk to Marina Corner and collect the package.
+2. **Getaway Driver** ($500) — take a car and drive it to the Northgate Garage before the clock runs out.
+3. **The Drop** ($750) — deliver the package at Palm Court, where the Red Vipers ambush you; fight them off with the pistol.
+4. **Heat** ($1,000) — escape while wanted: lose the police and reach the Solmar Hideout.
+5. **The Big Score** ($5,000) — the final heist: reach the Solmar Trust Bank, grab the money, escape to the hideout.
+
 ## How to run it
 
 No build step, no install, no network. Serve the `game/` folder with any static server and open `index.html` in a desktop browser:

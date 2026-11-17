@@ -113,6 +113,8 @@ export class Combat {
     if (hitEnemy) {
       hitEnemy.health -= CFG.shotDamage;
       this.particles.blood({ x: hitEnemy.x, y: 1.3, z: hitEnemy.z });
+      // Hit marker tick, so the player hears the shot land.
+      this.audio.tone(1250, 0.05, 0.14, 'square');
       if (hitEnemy.health <= 0) this.killEnemy(hitEnemy);
     } else if (hitT < CFG.shotRange) {
       this.particles.sparks(end);

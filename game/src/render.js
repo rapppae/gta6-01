@@ -54,7 +54,8 @@ export class Renderer3D {
     const backZ = Math.cos(yaw) * dist;
     const desired = new THREE.Vector3(
       target.x + backX,
-      target.y + height + pitch * 4,
+      // Never dip under the ground when the player looks steeply down.
+      Math.max(1.2, target.y + height + pitch * 4),
       target.z + backZ,
     );
     const k = 1 - Math.exp(-CFG.camSmooth * dt);

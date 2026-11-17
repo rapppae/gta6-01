@@ -63,10 +63,15 @@ export class PoliceForce {
       let z = player.z + Math.cos(angle) * dist;
       x = THREE.MathUtils.clamp(x, -170, 170);
       z = THREE.MathUtils.clamp(z, -170, 170);
-      // Never spawn inside a building.
+      // Never spawn inside a building, and never right on top of the player:
+      // clamping at the map edge can pull a spawn in close, so push it back out.
       if (this.world.isInsideBuilding(x, z, 2)) {
         x = this.world.nearestRoadCoord(x);
         z = this.world.nearestRoadCoord(z);
+      }
+      if (Math.hypot(x - player.x, z - player.z) < 40) {
+        x = THREE.MathUtils.clamp(player.x + Math.sin(angle) * 55, -170, 170);
+        z = THREE.MathUtils.clamp(player.z + Math.cos(angle) * 55, -170, 170);
       }
       const car = this.fleet.spawnPoliceChaser(x, z);
       this.chasers.push(car);

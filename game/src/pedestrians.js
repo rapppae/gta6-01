@@ -115,6 +115,15 @@ export class PedCrowd {
       }
       let nx = ped.x + mx * speed * dt;
       let nz = ped.z + mz * speed * dt;
+      // Don't walk through a car: sidestep around it instead.
+      for (const car of cars) {
+        if (Math.hypot(nx - car.x, nz - car.z) < 2.4) {
+          ped.angle += Math.PI / 2;
+          nx = ped.x;
+          nz = ped.z;
+          break;
+        }
+      }
       const pos = { x: nx, z: nz };
       if (this.world.isInsideBuilding(nx, nz, 0.6)) {
         ped.angle += Math.PI / 2;

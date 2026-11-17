@@ -16,6 +16,7 @@ export class Input {
     this.onPauseKey = null; // set by main.js
     this.onInteractKey = null;
     this.onReloadKey = null;
+    this.onMuteKey = null;
     this.attach();
   }
 
@@ -29,6 +30,7 @@ export class Input {
       if (e.code === 'Escape' && this.onPauseKey) this.onPauseKey();
       if (e.code === 'KeyE' && this.onInteractKey) this.onInteractKey();
       if (e.code === 'KeyR' && this.onReloadKey) this.onReloadKey();
+      if (e.code === 'KeyM' && this.onMuteKey) this.onMuteKey();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());
@@ -48,6 +50,12 @@ export class Input {
     });
     document.addEventListener('pointerlockchange', () => {
       this.pointerLocked = document.pointerLockElement === this.canvas;
+      // Losing the lock mid-game used to fling the camera on the next lock:
+      // drop any look accumulated while unlocked.
+      if (!this.pointerLocked) {
+        this.lookDX = 0;
+        this.lookDY = 0;
+      }
     });
     this.canvas.addEventListener('click', () => this.requestLock());
   }

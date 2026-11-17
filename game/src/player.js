@@ -64,6 +64,7 @@ export class Player {
     this.onGround = true;
     this.walkPhase = 0;
     this.lastHurtAt = -99;
+    this.justLanded = false; // set on a hard landing; main.js plays the thud
     this.dead = false;
     this.mesh = makePersonMesh(0x2e6fb0);
     this.mesh.position.set(0, 0, 0);
@@ -148,6 +149,8 @@ export class Player {
       this.vy -= CFG.gravity * dt;
       this.y += this.vy * dt;
       if (this.y <= 0) {
+        // A hard landing (a long fall) thuds; main.js hears justLanded.
+        if (this.vy < -9) this.justLanded = true;
         this.y = 0;
         this.vy = 0;
         this.onGround = true;

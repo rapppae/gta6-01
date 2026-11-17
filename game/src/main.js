@@ -126,6 +126,7 @@ function startGame(fromSave) {
   const save = fromSave ? loadSave() : null;
   combat.clearEnemies();
   combat.resetAmmo();
+  particles.reset();
   police.clearWanted(G.time);
   missions.reset();
   if (save) {
@@ -178,6 +179,7 @@ function gameOver() {
 function retryAfterDeath() {
   audio.click();
   combat.clearEnemies();
+  particles.reset();
   police.clearWanted(G.time);
   player.reset(PLACES.hideout);
   player.money = Math.max(0, player.money - 100);
@@ -242,6 +244,11 @@ input.onInteractKey = () => {
 
 input.onReloadKey = () => {
   if (G.screen === 'playing') combat.startReload();
+};
+
+input.onMuteKey = () => {
+  const muted = audio.toggleMute();
+  hud.toast(muted ? 'Sound off (M to turn it back on).' : 'Sound on.');
 };
 
 // ---- police / crime wiring ----
@@ -339,6 +346,10 @@ function frame() {
       audio.engine(Math.abs(car.speed) / CFG.carTopSpeed);
     } else {
       player.update(dt, input, G.time);
+      if (player.justLanded) {
+        player.justLanded = false;
+        audio.thud();
+      }
       audio.engine(0);
       // Footsteps.
       if (player.speed > 1 && G.time - lastStepAt > 0.45) {

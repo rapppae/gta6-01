@@ -124,6 +124,23 @@ export class ParticleSystem {
     this.flashLife = 0.07;
   }
 
+  // Clear every particle, tracer and flash: a clean slate for a new game
+  // or a retry, so no stale shot hangs in the air.
+  reset() {
+    for (let i = 0; i < MAX_PARTICLES; i++) {
+      this.life[i] = 0;
+      this.positions[i * 3 + 1] = -100;
+    }
+    this.geo.attributes.position.needsUpdate = true;
+    for (const t of this.tracers) {
+      t.line.visible = false;
+      t.hold = false;
+    }
+    this.flashLife = 0;
+    this.flashLight.intensity = 0;
+    this.flashMesh.visible = false;
+  }
+
   update(dt) {
     for (let i = 0; i < MAX_PARTICLES; i++) {
       if (this.life[i] <= 0) continue;

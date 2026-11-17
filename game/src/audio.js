@@ -81,6 +81,13 @@ export class SoundBank {
     this.tone(880, 0.06, 0.15, 'square');
   }
 
+  // M toggles all sound. Returns the new muted state for the HUD hint.
+  toggleMute() {
+    this.muted = !this.muted;
+    if (this.master) this.master.gain.value = this.muted ? 0 : 0.35;
+    return this.muted;
+  }
+
   shot() {
     this.noiseBurst(0.14, 1800, 0.7);
     this.tone(160, 0.1, 0.4, 'sine', 55);
