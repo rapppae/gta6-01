@@ -1,124 +1,87 @@
-// The game's rules and state, with no drawing and no browser in it: the player's paddle, the
-// pool of falling blocks and coins, spawning, collisions, score, lives and level. step() advances
-// one fixed step and returns what happened as bit flags, so the caller can react without the
-// world knowing about screens or sound. Nothing here allocates after createWorld returns.
-import { BLOCK, COIN, FIELD, LEVEL, LIVES, PLAYER, POOL_SIZE } from './config.js';
+// SOLMAR — the city itself. Pure layout data: no three.js here, so the sim and the
+// renderer stay separate. A road grid every 60 units, blocks with procedural buildings,
+// parks and parking lots, a beach and ocean on the south edge, and the road network the
+// traffic AI drives on.
+import { BEACH_Z, BUILDING_COLORS, ROOF_COLORS, STREETS, WORLD_HALF } from './config.js';
+import { createRandom } from './random.js';
 
-export const KIND_BLOCK = 0;
-export const KIND_COIN = 1;
+export function createWorld(seed) {
+  const rng = createRandom(seed);
+  const buildings = [];
+  const parks = [];
+  const lots = [];
+  const trees = [];
+  const colliders = [];
 
-export const EVENT_HIT = 1;
-export const EVENT_COIN = 2;
-export const EVENT_OVER = 4;
-
-function overlaps(a, b) {
-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-}
-
-export function createWorld(random) {
-  const player = { x: 0, y: FIELD.groundY - PLAYER.height, width: PLAYER.width, height: PLAYER.height, invulnerable: 0 };
-  const items = [];
-  for (let index = 0; index < POOL_SIZE; index += 1) {
-    items.push({ active: false, kind: KIND_BLOCK, x: 0, y: 0, width: 0, height: 0, speed: 0 });
-  }
-  const state = { player, items, score: 0, lives: LIVES, level: 1, elapsed: 0, blockTimer: 0, coinTimer: 0 };
-
-  function reset() {
-    player.x = (FIELD.width - player.width) / 2;
-    player.invulnerable = 0;
-    for (const item of items) item.active = false;
-    state.score = 0;
-    state.lives = LIVES;
-    state.level = 1;
-    state.elapsed = 0;
-    state.blockTimer = BLOCK.interval;
-    state.coinTimer = COIN.interval;
-  }
-
-  function freeItem() {
-    for (let index = 0; index < items.length; index += 1) if (!items[index].active) return items[index];
-    return null;
-  }
-
-  function spawnBlock() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_BLOCK;
-    item.width = BLOCK.minWidth + random() * (BLOCK.maxWidth - BLOCK.minWidth);
-    item.height = BLOCK.height;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = BLOCK.speed + BLOCK.speedPerLevel * (state.level - 1) + random() * BLOCK.speedJitter;
-  }
-
-  function spawnCoin() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_COIN;
-    item.width = COIN.size;
-    item.height = COIN.size;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = COIN.speed + COIN.speedPerLevel * (state.level - 1);
-  }
-
-  function blockInterval() {
-    return Math.max(BLOCK.minInterval, BLOCK.interval * BLOCK.intervalScale ** (state.level - 1));
-  }
-
-  /**
-   * One fixed step. `direction` is -1, 0 or 1 (left, still, right). With `harmless` set (the title
-   * screen's backdrop) things fall but nothing touches the player and nothing scores.
-   */
-  function step(dt, direction, harmless) {
-    let events = 0;
-    state.elapsed += dt;
-    state.level = Math.min(LEVEL.max, 1 + Math.floor(state.elapsed / LEVEL.seconds));
-
-    player.x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * dt));
-    if (player.invulnerable > 0) player.invulnerable = Math.max(0, player.invulnerable - dt);
-
-    state.blockTimer -= dt;
-    if (state.blockTimer <= 0) {
-      spawnBlock();
-      state.blockTimer += blockInterval();
-    }
-    state.coinTimer -= dt;
-    if (state.coinTimer <= 0) {
-      spawnCoin();
-      state.coinTimer += COIN.interval + random() * COIN.intervalJitter;
-    }
-
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      item.y += item.speed * dt;
-      if (item.y > FIELD.groundY) {
-        item.active = false;
-        if (item.kind === KIND_BLOCK && !harmless) state.score += BLOCK.dodgePoints;
+  for (let ix = 0; ix < STREETS.length - 1; ix += 1) {
+    for (let iz = 0; iz < STREETS.length - 1; iz += 1) {
+      const x0 = STREETS[ix] + 7;
+      const x1 = STREETS[ix + 1] - 7;
+      const z0 = STREETS[iz] + 7;
+      const z1 = STREETS[iz + 1] - 7;
+      const cx = (x0 + x1) / 2;
+      const cz = (z0 + z1) / 2;
+      if (cz < BEACH_Z + 20) continue; // the southern row is beach, not blocks
+      const roll = rng.next();
+      if (roll < 0.1) {
+        parks.push({ x: cx, z: cz, w: x1 - x0, d: z1 - z0 });
+        for (let t = 0; t < 7; t += 1) trees.push({ x: rng.range(x0 + 4, x1 - 4), z: rng.range(z0 + 4, z1 - 4), s: rng.range(0.8, 1.4) });
         continue;
       }
-      if (harmless || !overlaps(item, player)) continue;
-      if (item.kind === KIND_COIN) {
-        item.active = false;
-        state.score += COIN.points;
-        events |= EVENT_COIN;
-      } else if (player.invulnerable === 0) {
-        item.active = false;
-        state.lives -= 1;
-        player.invulnerable = PLAYER.invulnerable;
-        events |= EVENT_HIT;
-        if (state.lives === 0) {
-          events |= EVENT_OVER;
-          break;
-        }
+      if (roll < 0.18) { lots.push({ x: cx, z: cz }); continue; }
+      const count = rng.int(1, 3);
+      for (let b = 0; b < count; b += 1) {
+        const w = rng.range(12, 22);
+        const d = rng.range(12, 22);
+        const x = rng.range(x0 + w / 2, x1 - w / 2);
+        const z = rng.range(z0 + d / 2, z1 - d / 2);
+        const distCentre = Math.hypot(cx, cz);
+        const h = rng.range(8, distCentre < 90 ? 42 : 22);
+        const building = { x, z, w, d, h, color: rng.pick(BUILDING_COLORS), roof: rng.pick(ROOF_COLORS) };
+        buildings.push(building);
+        colliders.push({ x: x - w / 2, z: z - d / 2, w, d });
       }
     }
-    return events;
   }
+  // Street trees along the sidewalks.
+  for (const s of STREETS) {
+    for (let t = -240; t <= 240; t += 60) {
+      if (rng.chance(0.5)) trees.push({ x: s + 7.5, z: t + rng.range(-8, 8), s: rng.range(0.8, 1.3) });
+      if (rng.chance(0.5)) trees.push({ x: t + rng.range(-8, 8), z: s + 7.5, s: rng.range(0.8, 1.3) });
+    }
+  }
+  return { seed, rng, buildings, parks, lots, trees, colliders };
+}
 
-  reset();
-  return { state, reset, step };
+// Circle (x, z, radius) against a building AABB. Returns the push-out vector or null.
+export function collideBuildings(world, x, z, r) {
+  for (const c of world.colliders) {
+    const nx = Math.max(c.x, Math.min(x, c.x + c.w));
+    const nz = Math.max(c.z, Math.min(z, c.z + c.d));
+    const dx = x - nx;
+    const dz = z - nz;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < r * r) {
+      if (d2 > 0.0001) {
+        const d = Math.sqrt(d2);
+        return { x: (dx / d) * (r - d), z: (dz / d) * (r - d) };
+      }
+      return { x: 0, z: -r };
+    }
+  }
+  return null;
+}
+
+export function clampWorld(x, z, margin) {
+  return {
+    x: Math.max(-WORLD_HALF + margin, Math.min(WORLD_HALF - margin, x)),
+    z: Math.max(-WORLD_HALF + margin, Math.min(WORLD_HALF - margin, z)),
+  };
+}
+
+// The nearest street line to a point, for traffic and for snapping spawn points.
+export function nearestStreet(v) {
+  let best = STREETS[0];
+  for (const s of STREETS) if (Math.abs(s - v) < Math.abs(best - v)) best = s;
+  return best;
 }

@@ -1,79 +1,104 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// SOLMAR — the screenshot scenes behind ?shot=chase|city|mission|start. Each one plays
+// the real sim forward from a fresh world for a fixed number of steps, steered by a simple
+// autopilot (hold W, or aim at the nearest guard and fire once), so the frame is what a
+// short game really looks like and the same seed always gives the same frame.
+import { LANDMARKS } from './config.js';
+import { STEP } from './config.js';
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
+function runSteps(G, stepSim, seconds, setup) {
+  const n = Math.round(seconds / STEP);
+  for (let i = 0; i < n; i += 1) {
+    if (setup) setup(i);
+    stepSim(G, STEP);
   }
-  return Infinity;
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
+export function stageShot(name, G, stepSim) {
+  G.screen = 'play';
+  if (name === 'start') {
+    runSteps(G, stepSim, 5, null);
+    G.shotCam = { pos: [150, 55, -260], look: [0, 8, 40] };
+    G.screen = 'title';
+    return { screen: 'title' };
   }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
+  if (name === 'chase') {
+    // Mission 2, the getaway: the player tears east down 0th street in a stolen car,
+    // two police cars closing in, three stars on the HUD. The car rides the right lane.
+    const car = G.cars.find((c) => c.kind === 'parked');
+    car.kind = 'player';
+    car.x = -120; car.z = 2.5; car.heading = Math.PI / 2; car.speed = 24;
+    G.player.inCar = car;
+    G.player.x = car.x; G.player.z = car.z; G.player.heading = car.heading;
+    G.camera.yaw = -Math.PI / 2; // camera behind, looking east
+    G.camera.pitch = 0.22;
+    G.missions.startMission(1);
+    G.missions.stepIndex = 1; // already past the steal, driving to the getaway
+    G.missions.stepTimer = 0;
+    G.police.addWanted(3);
+    // Two police cars ahead in formation (patrol: straight, no ramming), so the frame
+    // shows the chase and the player car stays fast: one in the player's lane, one in
+    // the oncoming lane being overtaken.
+    const pc1 = {
+      id: 900, kind: 'police', x: -100, z: -2.5,
+      heading: Math.PI / 2, speed: 36, color: 0xe8e8e8, driver: null,
+      axis: 'x', line: 0, dir: 1, targetSpeed: 36, steer: 0, mesh: null, lightPhase: 0, patrol: true,
+    };
+    const pc2 = {
+      id: 901, kind: 'police', x: -85, z: 2.5,
+      heading: Math.PI / 2, speed: 34, color: 0xe8e8e8, driver: null,
+      axis: 'x', line: 0, dir: 1, targetSpeed: 34, steer: 0, mesh: null, lightPhase: 2, patrol: true,
+    };
+    // A third patrol car far ahead: it fills the wanted count (3 stars = 3 cars), so
+    // the wanted system spawns no chasing car that could ram the player off the road.
+    const pc3 = {
+      id: 902, kind: 'police', x: -40, z: -2.5,
+      heading: Math.PI / 2, speed: 38, color: 0xe8e8e8, driver: null,
+      axis: 'x', line: 0, dir: 1, targetSpeed: 38, steer: 0, mesh: null, lightPhase: 4, patrol: true,
+    };
+    G.cars.push(pc1, pc2, pc3);
+    G.input.forward = true;
+    runSteps(G, stepSim, 6, null);
+    G.input.forward = false;
+    return { screen: 'play' };
+  }
+  if (name === 'mission') {
+    // Mission 3, the drop: the player on foot at the north-east corner, guards ahead,
+    // one shot fired so the tracer and muzzle flash are in the frame. The player stands
+    // beyond the corner looking back south-west, so the city is behind the guards.
+    G.missions.startMission(2);
+    G.player.x = LANDMARKS.buyer.x + 14;
+    G.player.z = LANDMARKS.buyer.z + 14;
+    G.player.health = 100;
+    runSteps(G, stepSim, 0.5, null);
+    // Aim at the nearest guard and fire LAST, so the tracer, muzzle flash and hit
+    // sparks are still in the frame when it is painted (no sim steps run after this).
+    let nearest = null;
+    let nearestD = Infinity;
+    for (const e of G.enemies) {
+      const d = Math.hypot(e.x - G.player.x, e.z - G.player.z);
+      if (d < nearestD) { nearestD = d; nearest = e; }
     }
+    if (nearest) {
+      const dx = nearest.x - G.player.x;
+      const dz = nearest.z - G.player.z;
+      G.camera.yaw = Math.atan2(-dx, -dz);
+      G.camera.pitch = 0.02;
+      G.player.heading = Math.atan2(dx, dz);
+    }
+    G.combat.cooldown = 0;
+    G.combat.ammo = 12;
+    G.combat.shoot();
+    return { screen: 'play' };
   }
-  return best;
-}
-
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
-  }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
-  }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  // 'city' (default): mission 1, the player on foot on 0th street, walking south down
+  // the right lane while traffic and pedestrians pass.
+  G.missions.startMission(0);
+  G.player.x = 2.5; G.player.z = 100;
+  G.player.heading = 0;
+  G.camera.yaw = Math.PI;
+  G.camera.pitch = 0.18;
+  G.input.forward = true;
+  runSteps(G, stepSim, 5, null);
+  G.input.forward = false;
+  return { screen: 'play' };
 }
