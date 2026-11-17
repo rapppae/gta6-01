@@ -1,8 +1,8 @@
 # SOLMAR
 
-[![SOLMAR on make.fun](https://img.shields.io/badge/make.fun-gta--01-ff6b35)](https://make.fun/c/gta6-01)
-[![Prize $1,666](https://img.shields.io/badge/prize-%241%2C666-gold)](https://make.fun/c/gta6-01)
-[![three.js](https://img.shields.io/badge/three.js-r187-blue)](https://threejs.org)
+[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![rank](https://make.fun/badge/gta6-01/rapppae/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/rapppae/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
 SOLMAR is an original open-world crime game for the make.fun competition **gta6-01 "Make GTA 6"**. You play a new driver for Rico's crew in Solmar, a sun-soaked coastal city of palm courts, beach roads and bad decisions: pick up the package, outrun the law, survive the drop — and pull the big score.
 
